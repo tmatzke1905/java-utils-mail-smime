@@ -37,6 +37,7 @@ import java.security.cert.CertificateException;
 import java.security.cert.X509Certificate;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collection;
 import java.util.Enumeration;
 import java.util.Iterator;
 import java.util.List;
@@ -111,25 +112,27 @@ public final class SmimeUtil {
 
 	private static void updateMailcapCommandMap() {
 		MailcapCommandMap map = (MailcapCommandMap) CommandMap.getDefaultCommandMap();
-		map.addMailcap("application/pkcs7-signature;;x-java-content-handler=org.bouncycastle.mail.smime.handlers.pkcs7_signature");
-		map.addMailcap("application/pkcs7-mime;;x-java-content-handler=org.bouncycastle.mail.smime.handlers.pkcs7_mime");
-		map.addMailcap("application/x-pkcs7-signature;;x-java-content-handler=org.bouncycastle.mail.smime.handlers.x_pkcs7_signature");
-		map.addMailcap("application/x-pkcs7-mime;;x-java-content-handler=org.bouncycastle.mail.smime.handlers.x_pkcs7_mime");
-		map.addMailcap("multipart/signed;;x-java-content-handler=org.bouncycastle.mail.smime.handlers.multipart_signed");
+		map.addMailcap(
+				"application/pkcs7-signature;;x-java-content-handler=org.bouncycastle.mail.smime.handlers.pkcs7_signature");
+		map.addMailcap(
+				"application/pkcs7-mime;;x-java-content-handler=org.bouncycastle.mail.smime.handlers.pkcs7_mime");
+		map.addMailcap(
+				"application/x-pkcs7-signature;;x-java-content-handler=org.bouncycastle.mail.smime.handlers.x_pkcs7_signature");
+		map.addMailcap(
+				"application/x-pkcs7-mime;;x-java-content-handler=org.bouncycastle.mail.smime.handlers.x_pkcs7_mime");
+		map.addMailcap(
+				"multipart/signed;;x-java-content-handler=org.bouncycastle.mail.smime.handlers.multipart_signed");
 		CommandMap.setDefaultCommandMap(map);
 	}
 
 	/**
 	 * Encrypts a MIME message and yields a new S/MIME encrypted MIME message.
 	 * 
-	 * @param session
-	 *            The {@link Session} that is used in conjunction with the
-	 *            original {@link MimeMessage}.
-	 * @param mimeMessage
-	 *            The original {@link MimeMessage} to be encrypted.
-	 * @param certificate
-	 *            The {@link X509Certificate} used to obtain the
-	 *            {@link PublicKey} to encrypt the original message with.
+	 * @param session     The {@link Session} that is used in conjunction with the
+	 *                    original {@link MimeMessage}.
+	 * @param mimeMessage The original {@link MimeMessage} to be encrypted.
+	 * @param certificate The {@link X509Certificate} used to obtain the
+	 *                    {@link PublicKey} to encrypt the original message with.
 	 * @return The new S/MIME encrypted {@link MimeMessage}.
 	 */
 	public static MimeMessage encrypt(Session session, MimeMessage mimeMessage, X509Certificate certificate) {
@@ -151,14 +154,62 @@ public final class SmimeUtil {
 	}
 
 	/**
-	 * Encrypts a MIME body part and yields a new S/MIME encrypted MIME body
-	 * part.
+	 * Encrypts a MIME message and yields a new S/MIME encrypted MIME message.
 	 * 
-	 * @param mimeBodyPart
-	 *            The original {@link MimeBodyPart} to be encrypted.
-	 * @param certificate
-	 *            The {@link X509Certificate} used to obtain the
-	 *            {@link PublicKey} to encrypt the original body part with.
+	 * @param session     The {@link Session} that is used in conjunction with the
+	 *                    original {@link MimeMessage}.
+	 * @param mimeMessage The original {@link MimeMessage} to be encrypted.
+	 * @param certs       The {@link X509Certificate} List of certificates for
+	 *                    multiple Recipients used to obtain the {@link PublicKey}
+	 *                    to encrypt the original message with.
+	 * @return The new S/MIME encrypted {@link MimeMessage}.
+	 */
+	public static MimeMessage encrypt(Session session, MimeMessage mimeMessage, Collection<X509Certificate> certs) {
+		try {
+			MimeMessage encryptedMimeMessage = new MimeMessage(session);
+			copyHeaders(mimeMessage, encryptedMimeMessage);
+
+			SMIMEEnvelopedGenerator generator = prepareGenerator(certs);
+			OutputEncryptor encryptor = prepareEncryptor();
+
+			MimeBodyPart encryptedMimeBodyPart = generator.generate(mimeMessage, encryptor);
+			copyContent(encryptedMimeBodyPart, encryptedMimeMessage);
+			copyHeaders(encryptedMimeBodyPart, encryptedMimeMessage);
+			encryptedMimeMessage.saveChanges();
+			return encryptedMimeMessage;
+		} catch (Exception e) {
+			throw handledException(e);
+		}
+	}
+
+	/**
+	 * Encrypts a MIME body part and yields a new S/MIME encrypted MIME body part.
+	 * 
+	 * @param mimeBodyPart The original {@link MimeBodyPart} to be encrypted.
+	 * @param certs        The {@link X509Certificate} List of certificates for
+	 *                     multiple Recipients used to obtain the {@link PublicKey}
+	 * @return The new S/MIME encrypted {@link MimeBodyPart}.
+	 */
+	public static MimeBodyPart encrypt(MimeBodyPart mimeBodyPart, Collection<X509Certificate> certs) {
+		try {
+
+			SMIMEEnvelopedGenerator generator = prepareGenerator(certs);
+			OutputEncryptor encryptor = prepareEncryptor();
+
+			MimeBodyPart encryptedMimeBodyPart = generator.generate(mimeBodyPart, encryptor);
+			return encryptedMimeBodyPart;
+
+		} catch (Exception e) {
+			throw handledException(e);
+		}
+	}
+
+	/**
+	 * Encrypts a MIME body part and yields a new S/MIME encrypted MIME body part.
+	 * 
+	 * @param mimeBodyPart The original {@link MimeBodyPart} to be encrypted.
+	 * @param certificate  The {@link X509Certificate} used to obtain the
+	 *                     {@link PublicKey} to encrypt the original body part with.
 	 * @return The new S/MIME encrypted {@link MimeBodyPart}.
 	 */
 	public static MimeBodyPart encrypt(MimeBodyPart mimeBodyPart, X509Certificate certificate) {
@@ -193,6 +244,17 @@ public final class SmimeUtil {
 		}
 	}
 
+	private static SMIMEEnvelopedGenerator prepareGenerator(Collection<X509Certificate> certs)
+			throws CertificateEncodingException {
+		SMIMEEnvelopedGenerator generator = new SMIMEEnvelopedGenerator();
+		for (X509Certificate certificate : certs) {
+			JceKeyTransRecipientInfoGenerator infoGenerator = new JceKeyTransRecipientInfoGenerator(certificate);
+			infoGenerator.setProvider(BouncyCastleProvider.PROVIDER_NAME);
+			generator.addRecipientInfoGenerator(infoGenerator);
+		}
+		return generator;
+	}
+
 	private static SMIMEEnvelopedGenerator prepareGenerator(X509Certificate certificate)
 			throws CertificateEncodingException {
 		JceKeyTransRecipientInfoGenerator infoGenerator = new JceKeyTransRecipientInfoGenerator(certificate);
@@ -203,21 +265,18 @@ public final class SmimeUtil {
 	}
 
 	private static OutputEncryptor prepareEncryptor() throws CMSException {
-		return new JceCMSContentEncryptorBuilder(CMSAlgorithm.DES_EDE3_CBC).setProvider(
-				BouncyCastleProvider.PROVIDER_NAME).build();
+		return new JceCMSContentEncryptorBuilder(CMSAlgorithm.DES_EDE3_CBC)
+				.setProvider(BouncyCastleProvider.PROVIDER_NAME).build();
 	}
 
 	/**
 	 * Decrypts a S/MIME encrypted MIME message and yields a new MIME message.
 	 * 
-	 * @param session
-	 *            The {@link Session} that is used in conjunction with the
-	 *            encrypted {@link MimeMessage}.
-	 * @param mimeMessage
-	 *            The encrypted {@link MimeMessage} to be decrypted.
-	 * @param smimeKey
-	 *            The {@link SmimeKey} used to obtain the {@link PrivateKey} to
-	 *            decrypt the encrypted message with.
+	 * @param session     The {@link Session} that is used in conjunction with the
+	 *                    encrypted {@link MimeMessage}.
+	 * @param mimeMessage The encrypted {@link MimeMessage} to be decrypted.
+	 * @param smimeKey    The {@link SmimeKey} used to obtain the {@link PrivateKey}
+	 *                    to decrypt the encrypted message with.
 	 * @return The new S/MIME decrypted {@link MimeMessage}.
 	 */
 	public static MimeMessage decrypt(Session session, MimeMessage mimeMessage, SmimeKey smimeKey) {
@@ -237,14 +296,12 @@ public final class SmimeUtil {
 	}
 
 	/**
-	 * Decrypts a S/MIME encrypted MIME body part and yields a new MIME body
-	 * part.
+	 * Decrypts a S/MIME encrypted MIME body part and yields a new MIME body part.
 	 * 
-	 * @param mimeBodyPart
-	 *            The encrypted {@link MimeBodyPart} to be decrypted.
-	 * @param smimeKey
-	 *            The {@link SmimeKey} used to obtain the {@link PrivateKey} to
-	 *            decrypt the encrypted body part with.
+	 * @param mimeBodyPart The encrypted {@link MimeBodyPart} to be decrypted.
+	 * @param smimeKey     The {@link SmimeKey} used to obtain the
+	 *                     {@link PrivateKey} to decrypt the encrypted body part
+	 *                     with.
 	 * @return The new S/MIME decrypted {@link MimeBodyPart}.
 	 */
 	public static MimeBodyPart decrypt(MimeBodyPart mimeBodyPart, SmimeKey smimeKey) {
@@ -257,14 +314,12 @@ public final class SmimeUtil {
 	}
 
 	/**
-	 * Decrypts a S/MIME encrypted MIME multipart and yields a new MIME body
-	 * part.
+	 * Decrypts a S/MIME encrypted MIME multipart and yields a new MIME body part.
 	 * 
-	 * @param mimeMultipart
-	 *            The encrypted {@link MimeMultipart} to be decrypted.
-	 * @param smimeKey
-	 *            The {@link SmimeKey} used to obtain the {@link PrivateKey} to
-	 *            decrypt the encrypted multipart with.
+	 * @param mimeMultipart The encrypted {@link MimeMultipart} to be decrypted.
+	 * @param smimeKey      The {@link SmimeKey} used to obtain the
+	 *                      {@link PrivateKey} to decrypt the encrypted multipart
+	 *                      with.
 	 * @return The new S/MIME decrypted {@link MimeBodyPart}.
 	 */
 	public static MimeBodyPart decrypt(MimeMultipart mimeMultipart, SmimeKey smimeKey) {
@@ -278,8 +333,8 @@ public final class SmimeUtil {
 		}
 	}
 
-	private static byte[] decryptContent(SMIMEEnveloped smimeEnveloped, SmimeKey smimeKey) throws MessagingException,
-			CMSException {
+	private static byte[] decryptContent(SMIMEEnveloped smimeEnveloped, SmimeKey smimeKey)
+			throws MessagingException, CMSException {
 		X509Certificate certificate = smimeKey.getCertificate();
 		PrivateKey privateKey = smimeKey.getPrivateKey();
 
@@ -304,19 +359,17 @@ public final class SmimeUtil {
 		}
 	}
 
-	private static void copyContent(MimeBodyPart fromBodyPart, MimeMessage toMessage) throws MessagingException,
-			IOException {
+	private static void copyContent(MimeBodyPart fromBodyPart, MimeMessage toMessage)
+			throws MessagingException, IOException {
 		toMessage.setContent(fromBodyPart.getContent(), fromBodyPart.getContentType());
 	}
 
 	/**
 	 * Signs a MIME body part and yields a new S/MIME signed MIME body part.
 	 * 
-	 * @param mimeBodyPart
-	 *            The original {@link MimeBodyPart} to be signed.
-	 * @param smimeKey
-	 *            The {@link SmimeKey} used to obtain the {@link PrivateKey} to
-	 *            sign the original body part with.
+	 * @param mimeBodyPart The original {@link MimeBodyPart} to be signed.
+	 * @param smimeKey     The {@link SmimeKey} used to obtain the
+	 *                     {@link PrivateKey} to sign the original body part with.
 	 * @return The new S/MIME signed {@link MimeBodyPart}.
 	 */
 	public static MimeBodyPart sign(MimeBodyPart mimeBodyPart, SmimeKey smimeKey) {
@@ -333,16 +386,16 @@ public final class SmimeUtil {
 
 	}
 
-	private static SMIMESignedGenerator getGenerator(SmimeKey smimeKey) throws CertificateEncodingException,
-			OperatorCreationException {
+	private static SMIMESignedGenerator getGenerator(SmimeKey smimeKey)
+			throws CertificateEncodingException, OperatorCreationException {
 		SMIMESignedGenerator generator = new SMIMESignedGenerator();
 		generator.addCertificates(getCertificateStore(smimeKey));
 		generator.addSignerInfoGenerator(getInfoGenerator(smimeKey));
 		return generator;
 	}
 
-	private static SignerInfoGenerator getInfoGenerator(SmimeKey smimeKey) throws OperatorCreationException,
-			CertificateEncodingException {
+	private static SignerInfoGenerator getInfoGenerator(SmimeKey smimeKey)
+			throws OperatorCreationException, CertificateEncodingException {
 		JcaSimpleSignerInfoGeneratorBuilder builder = new JcaSimpleSignerInfoGeneratorBuilder();
 		builder.setSignedAttributeGenerator(new AttributeTable(getSignedAttributes(smimeKey)));
 		builder.setProvider(BouncyCastleProvider.PROVIDER_NAME);
@@ -394,14 +447,11 @@ public final class SmimeUtil {
 	/**
 	 * Signs a MIME message and yields a new S/MIME signed MIME message.
 	 * 
-	 * @param session
-	 *            The {@link Session} that is used in conjunction with the
-	 *            original {@link MimeMessage}.
-	 * @param mimeMessage
-	 *            The original {@link MimeMessage} to be signed.
-	 * @param smimeKey
-	 *            The {@link SmimeKey} used to obtain the {@link PrivateKey} to
-	 *            sign the original message with.
+	 * @param session     The {@link Session} that is used in conjunction with the
+	 *                    original {@link MimeMessage}.
+	 * @param mimeMessage The original {@link MimeMessage} to be signed.
+	 * @param smimeKey    The {@link SmimeKey} used to obtain the {@link PrivateKey}
+	 *                    to sign the original message with.
 	 * @return The new S/MIME signed {@link MimeMessage}.
 	 */
 	public static MimeMessage sign(Session session, MimeMessage mimeMessage, SmimeKey smimeKey) {
@@ -430,8 +480,7 @@ public final class SmimeUtil {
 	/**
 	 * Checks the signature on a S/MIME signed MIME multipart.
 	 * 
-	 * @param mimeMultipart
-	 *            The {@link MimeMultipart} to be checked.
+	 * @param mimeMultipart The {@link MimeMultipart} to be checked.
 	 * @return {@code true} if the multipart is correctly signed, {@code false}
 	 *         otherwise.
 	 */
@@ -446,8 +495,7 @@ public final class SmimeUtil {
 	/**
 	 * Checks the signature on a S/MIME signed MIME part (i.e. MIME message).
 	 * 
-	 * @param mimePart
-	 *            The {@link MimePart} to be checked.
+	 * @param mimePart The {@link MimePart} to be checked.
 	 * @return {@code true} if the part is correctly signed, {@code false}
 	 *         otherwise.
 	 */
@@ -455,7 +503,8 @@ public final class SmimeUtil {
 		try {
 			if (mimePart.isMimeType("multipart/signed")) {
 				return checkSignature(new SMIMESigned((MimeMultipart) mimePart.getContent()));
-			} else if (mimePart.isMimeType("application/pkcs7-mime") || mimePart.isMimeType("application/x-pkcs7-mime")) {
+			} else if (mimePart.isMimeType("application/pkcs7-mime")
+					|| mimePart.isMimeType("application/x-pkcs7-mime")) {
 				return checkSignature(new SMIMESigned(mimePart));
 			} else {
 				throw new SmimeException("Message not signed");
@@ -468,8 +517,8 @@ public final class SmimeUtil {
 	/**
 	 * Checks a SMIMESigned to make sure that the signature matches.
 	 */
-	private static boolean checkSignature(SMIMESigned smimeSigned) throws MessagingException, IOException,
-			GeneralSecurityException {
+	private static boolean checkSignature(SMIMESigned smimeSigned)
+			throws MessagingException, IOException, GeneralSecurityException {
 		try {
 			boolean returnValue = true;
 
@@ -511,8 +560,7 @@ public final class SmimeUtil {
 	/**
 	 * Returns the signed MIME body part of a S/MIME signed MIME multipart.
 	 * 
-	 * @param mimeMultipart
-	 *            The {@link MimeMultipart} to be stripped off.
+	 * @param mimeMultipart The {@link MimeMultipart} to be stripped off.
 	 * @return The signed {@link MimeBodyPart} contained in the
 	 *         {@link MimeMultipart}.
 	 */
@@ -528,16 +576,15 @@ public final class SmimeUtil {
 	 * Returns the signed MIME body part of a S/MIME signed MIME part (i.e. MIME
 	 * message).
 	 * 
-	 * @param mimePart
-	 *            The {@link MimePart} to be stripped off.
-	 * @return The signed {@link MimeBodyPart} contained in the {@link MimePart}
-	 *         .
+	 * @param mimePart The {@link MimePart} to be stripped off.
+	 * @return The signed {@link MimeBodyPart} contained in the {@link MimePart} .
 	 */
 	public static MimeBodyPart getSignedContent(MimePart mimePart) {
 		try {
 			if (mimePart.isMimeType("multipart/signed")) {
 				return new SMIMESigned((MimeMultipart) mimePart.getContent()).getContent();
-			} else if (mimePart.isMimeType("application/pkcs7-mime") || mimePart.isMimeType("application/x-pkcs7-mime")) {
+			} else if (mimePart.isMimeType("application/pkcs7-mime")
+					|| mimePart.isMimeType("application/x-pkcs7-mime")) {
 				return new SMIMESigned(mimePart).getContent();
 			} else {
 				throw new SmimeException("Message not signed");
@@ -550,8 +597,7 @@ public final class SmimeUtil {
 	/**
 	 * Returns the S/MIME state of a MIME multipart.
 	 * 
-	 * @param mimeMultipart
-	 *            The {@link MimeMultipart} to be checked.
+	 * @param mimeMultipart The {@link MimeMultipart} to be checked.
 	 * @return the {@link SmimeState} of the {@link MimeMultipart}.
 	 */
 	public static SmimeState getStatus(MimeMultipart mimeMultipart) {
@@ -565,8 +611,7 @@ public final class SmimeUtil {
 	/**
 	 * Returns the S/MIME state of a MIME part (i.e. MIME message).
 	 * 
-	 * @param mimePart
-	 *            The {@link MimePart} to be checked.
+	 * @param mimePart The {@link MimePart} to be checked.
 	 * @return the {@link SmimeState} of the {@link MimePart}.
 	 */
 	public static SmimeState getStatus(MimePart mimePart) {
